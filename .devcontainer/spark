@@ -1,0 +1,181 @@
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          spark
+# Required-Start:    $all
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: Apache Spark Master Service
+### END INIT INFO
+
+. /etc/rc.d/init.d/functions
+
+# Configuration par défaut - à adapter selon votre installation
+JAVA_HOME=/usr/lib/jvm/msopenjdk-current
+SPARK_HOME=${SPARK_HOME:-/opt/spark}
+SPARK_USER=${SPARK_USER:-spark}
+SPARK_PID_DIR=${SPARK_PID_DIR:-/var/run/spark}
+SPARK_LOG_DIR=${SPARK_LOG_DIR:-/var/log/spark}
+SPARK_MASTER_HOST=${SPARK_MASTER_HOST:-$(hostname)}
+SPARK_MASTER_PORT=${SPARK_MASTER_PORT:-7077}
+SPARK_MASTER_WEBUI_PORT=${SPARK_MASTER_WEBUI_PORT:-8080}
+
+# Fichiers de contrôle
+PIDFILE="$SPARK_PID_DIR/spark-$SPARK_USER-org.apache.spark.deploy.master.Master-1.pid"
+LOCKFILE="/var/lock/subsys/spark-master"
+
+# Vérifications préliminaires
+check_spark_home() {
+    if [ ! -d "$SPARK_HOME" ]; then
+        echo "ERREUR: SPARK_HOME ($SPARK_HOME) n'existe pas"
+        exit 1
+    fi
+}
+
+check_spark_user() {
+    if ! id "$SPARK_USER" >/dev/null 2>&1; then
+        echo "ERREUR: L'utilisateur $SPARK_USER n'existe pas"
+        exit 1
+    fi
+}
+
+create_directories() {
+    # Créer les répertoires nécessaires
+    mkdir -p "$SPARK_PID_DIR" "$SPARK_LOG_DIR"
+    chown "$SPARK_USER:$SPARK_USER" "$SPARK_PID_DIR" "$SPARK_LOG_DIR"
+}
+
+start() {
+    echo -n "Démarrage de Spark Master: "
+    
+    check_spark_home
+    check_spark_user
+    create_directories
+    
+    # Vérifier si le service est déjà en cours d'exécution
+    if [ -f "$PIDFILE" ] && kill -0 `cat "$PIDFILE"` 2>/dev/null; then
+        echo "Spark Master est déjà en cours d'exécution"
+        return 1
+    fi
+    
+    # Démarrer Spark Master
+    su -s /bin/bash "$SPARK_USER" -c "
+        export SPARK_HOME='$SPARK_HOME'
+        export SPARK_PID_DIR='$SPARK_PID_DIR'
+        export SPARK_LOG_DIR='$SPARK_LOG_DIR'
+        cd '$SPARK_HOME'
+        '$SPARK_HOME/sbin/start-master.sh' \
+            --host '$SPARK_MASTER_HOST' \
+            --port '$SPARK_MASTER_PORT' \
+            --webui-port '$SPARK_MASTER_WEBUI_PORT'
+    "
+    
+    RETVAL=$?
+    
+    # Attendre que le PID file soit créé
+    sleep 2
+    
+    if [ $RETVAL -eq 0 ] && [ -f "$PIDFILE" ]; then
+        touch "$LOCKFILE"
+        echo_success
+        echo
+    else
+        echo_failure
+        echo
+    fi
+    
+    return $RETVAL
+}
+
+stop() {
+    echo -n "Arrêt de Spark Master: "
+    
+    if [ ! -f "$PIDFILE" ]; then
+        echo "Spark Master n'est pas en cours d'exécution"
+        return 1
+    fi
+    
+    PID=`cat "$PIDFILE"`
+    
+    # Utiliser le script d'arrêt de Spark
+    su -s /bin/bash "$SPARK_USER" -c "
+        export SPARK_HOME='$SPARK_HOME'
+        export SPARK_PID_DIR='$SPARK_PID_DIR'
+        cd '$SPARK_HOME'
+        '$SPARK_HOME/sbin/stop-master.sh'
+    "
+    
+    RETVAL=$?
+    
+    # Si le script d'arrêt échoue, forcer l'arrêt
+    if [ $RETVAL -ne 0 ] && kill -0 "$PID" 2>/dev/null; then
+        echo -n "Arrêt forcé... "
+        kill -TERM "$PID"
+        sleep 5
+        
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -KILL "$PID"
+            sleep 2
+        fi
+    fi
+    
+    # Nettoyer les fichiers
+    rm -f "$PIDFILE" "$LOCKFILE"
+    
+    if ! kill -0 "$PID" 2>/dev/null; then
+        echo_success
+        echo
+        RETVAL=0
+    else
+        echo_failure
+        echo
+        RETVAL=1
+    fi
+    
+    return $RETVAL
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+status() {
+    if [ -f "$PIDFILE" ]; then
+        PID=`cat "$PIDFILE"`
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Spark Master est en cours d'exécution (PID: $PID)"
+            echo "Interface Web: http://$SPARK_MASTER_HOST:$SPARK_MASTER_WEBUI_PORT"
+            echo "URL Master: spark://$SPARK_MASTER_HOST:$SPARK_MASTER_PORT"
+            return 0
+        else
+            echo "Spark Master n'est pas en cours d'exécution (fichier PID obsolète)"
+            return 1
+        fi
+    else
+        echo "Spark Master n'est pas en cours d'exécution"
+        return 3
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status}"
+        exit 1
+        ;;
+esac
+
+exit $?
