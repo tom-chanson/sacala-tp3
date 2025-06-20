@@ -1,0 +1,11 @@
+island,sex,species,nb_individus,pourcentage
+Biscoe,female,Adelie,22,13.50
+Biscoe,male,Adelie,22,13.50
+Biscoe,female,Gentoo,58,35.58
+Biscoe,male,Gentoo,61,37.42
+Dream,female,Adelie,27,21.95
+Dream,male,Adelie,28,22.76
+Dream,female,Chinstrap,34,27.64
+Dream,male,Chinstrap,34,27.64
+Torgersen,female,Adelie,24,51.06
+Torgersen,male,Adelie,23,48.94
